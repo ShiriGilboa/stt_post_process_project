@@ -113,7 +113,7 @@ def load_data():
     """Load and preprocess the evaluation data"""
     try:
         script_dir = os.path.dirname(os.path.abspath(__file__))
-        csv_path = os.path.join(script_dir, 'after_evaluation', 'evaluation_results_unified.csv')
+        csv_path = os.path.join(script_dir, 'stt_post_process_improvements','dev', 'after_evaluation', 'evaluation_results_unified.csv')
         df = pd.read_csv(csv_path)        
         return df
     except FileNotFoundError:
