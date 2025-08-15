@@ -110,7 +110,7 @@ st.markdown("""
 def load_data():
     """Load and preprocess the evaluation data"""
     try:
-        df = pd.read_csv('/Users/shirigilboa/msc_final_project/stt_post_process_project/stt_post_process_improvements/dev/after_evaluation/evaluation_results_unified.csv')
+        df = pd.read_csv('evaluation_results_unified.csv')
         return df
     except FileNotFoundError:
         st.error("evaluation_results_unified.csv not found. Please ensure the file exists in the same directory.")
