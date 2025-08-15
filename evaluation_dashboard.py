@@ -7,7 +7,56 @@ import numpy as np
 import difflib
 from collections import defaultdict
 import os
+import hashlib
 
+# Authentication configuration
+# Priority: 1) Streamlit secrets, 2) Environment variable, 3) Fallback
+try:
+    DASHBOARD_PASSWORD = st.secrets["STREAMLIT_PASSWORD"]
+except (KeyError, FileNotFoundError):
+    DASHBOARD_PASSWORD = os.getenv("STREAMLIT_PASSWORD", "stt_dashboard_2024")  # Use env var or fallback
+
+def check_password():
+    """Returns `True` if the user had the correct password."""
+    
+    def password_entered():
+        """Checks whether a password entered by the user is correct."""
+        if hashlib.sha256(st.session_state["password"].encode()).hexdigest() == hashlib.sha256(DASHBOARD_PASSWORD.encode()).hexdigest():
+            st.session_state["password_correct"] = True
+            del st.session_state["password"]  # Don't store the password
+        else:
+            st.session_state["password_correct"] = False
+
+    # Return True if the password is validated
+    if st.session_state.get("password_correct", False):
+        return True
+
+    # Create centered login form
+    col1, col2, col3 = st.columns([1, 2, 1])
+    
+    with col2:
+        st.markdown('<div class="login-container">', unsafe_allow_html=True)
+        
+        st.markdown('<h2 class="login-header">🔐 Dashboard Access</h2>', unsafe_allow_html=True)
+        st.markdown("Please enter the password to access the STT Enhancement Evaluation Dashboard:")
+        
+        st.text_input(
+            "Password", 
+            type="password", 
+            on_change=password_entered, 
+            key="password",
+            help="Contact the administrator if you don't have the password"
+        )
+        
+        if "password_correct" in st.session_state:
+            if not st.session_state["password_correct"]:
+                st.error("😞 Password incorrect. Please try again.")
+        
+        st.markdown('<p class="login-info">This dashboard contains sensitive evaluation data and requires authentication.</p>', unsafe_allow_html=True)
+        
+        st.markdown('</div>', unsafe_allow_html=True)
+    
+    return False
 
 # Page configuration
 st.set_page_config(
@@ -16,6 +65,10 @@ st.set_page_config(
     layout="wide",
     initial_sidebar_state="expanded"
 )
+
+# Check authentication before showing the dashboard
+if not check_password():
+    st.stop()  # Do not continue if password is not correct
 
 # Custom CSS for professional styling
 st.markdown("""
@@ -26,6 +79,29 @@ st.markdown("""
         text-align: center;
         margin-bottom: 2rem;
         padding: 1rem 0;
+    }
+    
+    /* Login form styling */
+    .login-container {
+        max-width: 400px;
+        margin: 0 auto;
+        padding: 2rem;
+        border-radius: 10px;
+        box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+        background-color: #f8f9fa;
+    }
+    
+    .login-header {
+        text-align: center;
+        color: #333;
+        margin-bottom: 1.5rem;
+    }
+    
+    .login-info {
+        text-align: center;
+        color: #666;
+        font-style: italic;
+        margin-top: 1rem;
     }
     
     /* Text highlighting for sample analysis */
@@ -113,11 +189,11 @@ def load_data():
     """Load and preprocess the evaluation data"""
     try:
         script_dir = os.path.dirname(os.path.abspath(__file__))
-        csv_path = os.path.join(script_dir, 'after_evaluation', 'evaluation_results_unified.csv')
+        csv_path = os.path.join(script_dir, 'stt_post_process_improvements','dev', 'after_evaluation', 'evaluation_results_unified.csv')
         df = pd.read_csv(csv_path)        
         return df
-    except FileNotFoundError:
-        st.error("evaluation_results_unified.csv not found. Please ensure the file exists in the same directory.")
+    except FileNotFoundError as e:
+        st.error(f"evaluation_results_unified.csv not found. Please ensure the file exists in the same directory. {e}")
         return None
 
 def calculate_pipeline_stats(df):
@@ -343,6 +419,16 @@ def highlight_differences(text1, text2):
     return formatted1, formatted2
 
 def main():
+    # Add logout button to sidebar
+    with st.sidebar:
+        st.markdown("---")
+        if st.button("🚪 Logout", help="Click to logout and return to login screen"):
+            # Clear the authentication state
+            for key in list(st.session_state.keys()):
+                if key.startswith("password"):
+                    del st.session_state[key]
+            st.rerun()
+    
     # Header
     st.markdown('<h1 class="main-header">🎤 STT Enhancement Evaluation Dashboard</h1>', unsafe_allow_html=True)
     st.markdown("**Multi-Agent LLM Pipeline Performance Analysis for Speech-to-Text Enhancement**")
