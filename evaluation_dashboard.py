@@ -6,6 +6,8 @@ from plotly.subplots import make_subplots
 import numpy as np
 import difflib
 from collections import defaultdict
+import os
+
 
 # Page configuration
 st.set_page_config(
@@ -110,7 +112,9 @@ st.markdown("""
 def load_data():
     """Load and preprocess the evaluation data"""
     try:
-        df = pd.read_csv('evaluation_results_unified.csv')
+        script_dir = os.path.dirname(os.path.abspath(__file__))
+        csv_path = os.path.join(script_dir, 'after_evaluation', 'evaluation_results_unified.csv')
+        df = pd.read_csv(csv_path)        
         return df
     except FileNotFoundError:
         st.error("evaluation_results_unified.csv not found. Please ensure the file exists in the same directory.")
