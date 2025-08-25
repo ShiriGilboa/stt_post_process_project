@@ -8,6 +8,23 @@ import difflib
 from collections import defaultdict
 import os
 import hashlib
+import sys
+import re
+
+# Add the dev directory to Python path to import utils
+sys.path.append(os.path.join(os.path.dirname(__file__), 'stt_post_process_improvements', 'dev'))
+
+try:
+    from utils import normalize_text
+    NORMALIZATION_AVAILABLE = True
+except ImportError as e:
+    st.warning(f"Could not import normalization functions: {e}. Text will be displayed as-is.")
+    NORMALIZATION_AVAILABLE = False
+    # Fallback normalize function
+    def normalize_text(text):
+        if not isinstance(text, str):
+            return ""
+        return text.lower().strip()
 
 # Authentication configuration
 # Priority: 1) Streamlit secrets, 2) Environment variable, 3) Fallback
@@ -104,6 +121,67 @@ st.markdown("""
         margin-top: 1rem;
     }
     
+    /* Pipeline name styling - smaller fonts */
+    .small-pipeline-name {
+        font-size: 0.85rem !important;
+        line-height: 1.2 !important;
+    }
+    
+    /* Streamlit metric labels with smaller font */
+    [data-testid="metric-container"] label {
+        font-size: 0.65rem !important;
+    }
+    
+    [data-testid="metric-container"] [data-testid="metric-value"] {
+        font-size: 0.7rem !important;
+    }
+    
+    /* Executive Summary metrics - even smaller fonts */
+    [data-testid="metric-container"] div[data-testid="metric-value"] {
+        font-size: 0.65rem !important;
+        font-weight: 600 !important;
+    }
+    
+    /* Metric delta text smaller */
+    [data-testid="metric-container"] div[data-testid="metric-delta"] {
+        font-size: 0.6rem !important;
+    }
+    
+    /* Make metric labels even smaller */
+    [data-testid="metric-container"] > label {
+        font-size: 0.6rem !important;
+        font-weight: 500 !important;
+    }
+    
+    /* Target all text in metric containers */
+    [data-testid="metric-container"] * {
+        font-size: 0.65rem !important;
+    }
+    
+    /* Override any large text in metrics */
+    [data-testid="metric-container"] p,
+    [data-testid="metric-container"] span,
+    [data-testid="metric-container"] div {
+        font-size: 0.65rem !important;
+        line-height: 1.1 !important;
+    }
+    
+    /* Expander headers with smaller font for pipeline names */
+    .streamlit-expander .streamlit-expanderHeader p {
+        font-size: 0.9rem !important;
+        line-height: 1.3 !important;
+    }
+    
+    /* Selectbox options with smaller font */
+    .stSelectbox label {
+        font-size: 0.9rem !important;
+    }
+    
+    /* Chart legend text smaller */
+    .plotly .legend text {
+        font-size: 11px !important;
+    }
+    
     /* Text highlighting for sample analysis */
     .transcript-box {
         border: 1px solid #ddd;
@@ -196,6 +274,26 @@ def load_data():
         st.error(f"evaluation_results_unified.csv not found. Please ensure the file exists in the same directory. {e}")
         return None
 
+def get_friendly_pipeline_name(technical_name):
+    """Convert technical pipeline names to user-friendly names"""
+    name_mapping = {
+        'FixTranscriptByLLMPipeline': 'Direct LLM Correction',
+        'GenerateWhisperPromptPipeline': 'Smart Context Enhancement', 
+        'GenerateNamesPipeline': 'Name Recognition & Correction',
+        'GenerateTopicPipeline': 'Topic Identification'
+    }
+    return name_mapping.get(technical_name, technical_name)
+
+def get_pipeline_description(technical_name):
+    """Get detailed description of what each pipeline does"""
+    descriptions = {
+        'FixTranscriptByLLMPipeline': 'Directly corrects STT errors (spelling, casing, punctuation) using LLM without additional context',
+        'GenerateWhisperPromptPipeline': 'Advanced multi-agent system that extracts topics, names, and jargon to generate contextual prompts for Whisper',
+        'GenerateNamesPipeline': 'Identifies and corrects person names using topic-aware fuzzy matching against domain-specific databases',
+        'GenerateTopicPipeline': 'Extracts the main topic/domain (2-5 words) to provide context for other enhancement methods'
+    }
+    return descriptions.get(technical_name, 'No description available')
+
 def calculate_pipeline_stats(df):
     """Calculate comprehensive statistics for each pipeline"""
     pipelines = ['FixTranscriptByLLMPipeline', 'GenerateWhisperPromptPipeline', 
@@ -224,7 +322,9 @@ def calculate_pipeline_stats(df):
                 relative_improvement = (wer_improvement / baseline_wer) * 100 if baseline_wer > 0 else 0
                 
                 stats.append({
-                    'Pipeline': pipeline.replace('Pipeline', '').replace('Generate', '').replace('Whisper', 'Whisper '),
+                    'Pipeline': get_friendly_pipeline_name(pipeline),
+                    'Technical_Name': pipeline,
+                    'Description': get_pipeline_description(pipeline),
                     'Total_Segments': total,
                     'Improved': improved,
                     'Same': same,
@@ -418,6 +518,16 @@ def highlight_differences(text1, text2):
     
     return formatted1, formatted2
 
+def get_short_pipeline_name(technical_name):
+    """Convert technical pipeline names to very short names for metrics display"""
+    short_mapping = {
+        'FixTranscriptByLLMPipeline': 'Direct LLM',
+        'GenerateWhisperPromptPipeline': 'Smart Context', 
+        'GenerateNamesPipeline': 'Name Recognition',
+        'GenerateTopicPipeline': 'Topic ID'
+    }
+    return short_mapping.get(technical_name, technical_name)
+
 def main():
     # Add logout button to sidebar
     with st.sidebar:
@@ -472,22 +582,25 @@ def show_main_dashboard(df):
     
     with col2:
         best_pipeline = stats_df.loc[stats_df['Improved_%'].idxmax()]
-        pipeline_name = best_pipeline['Pipeline'].replace('FixTranscriptByLLM', 'Fix LLM').replace('Generate', '').replace('Whisper ', 'Whisper')
+        # Use shorter name for display
+        short_name = get_short_pipeline_name(best_pipeline['Technical_Name'])
         st.metric(
             label="Best Pipeline",
-            value=pipeline_name,
+            value=short_name,
             delta=f"{best_pipeline['Improved_%']:.1f}% improvement rate",
-            delta_color="normal"
+            delta_color="normal",
+            help=best_pipeline['Description']
         )
     
     with col3:
         safest_pipeline = stats_df.loc[stats_df['Degraded_%'].idxmin()]
-        safe_pipeline_name = safest_pipeline['Pipeline'].replace('FixTranscriptByLLM', 'Fix LLM').replace('Generate', '').replace('Whisper ', 'Whisper')
+        short_safe_name = get_short_pipeline_name(safest_pipeline['Technical_Name'])
         st.metric(
             label="Safest Pipeline",
-            value=safe_pipeline_name,
+            value=short_safe_name,
             delta=f"{safest_pipeline['Degraded_%']:.1f}% degradation risk",
-            delta_color="inverse"
+            delta_color="inverse",
+            help=safest_pipeline['Description']
         )
     
     with col4:
@@ -497,6 +610,29 @@ def show_main_dashboard(df):
             value=f"{avg_baseline_wer:.3f}",
             help="Average Word Error Rate across all segments"
         )
+    
+    st.markdown("---")
+    
+    # Pipeline descriptions section
+    st.subheader("🔧 Pipeline Descriptions")
+    
+    for _, row in stats_df.iterrows():
+        with st.expander(f"**{row['Pipeline']}** - {row['Improved_%']:.1f}% improvement rate", expanded=False):
+            st.write(row['Description'])
+            
+            col1, col2, col3 = st.columns(3)
+            with col1:
+                st.metric("Total Segments", row['Total_Segments'])
+            with col2:
+                st.metric("Average WER", f"{row['Pipeline_WER']:.4f}")
+            with col3:
+                improvement = row['WER_Improvement']
+                if improvement > 0:
+                    st.metric("WER Reduction", f"{improvement:.4f}", delta="Improvement", delta_color="normal")
+                elif improvement < 0:
+                    st.metric("WER Change", f"{improvement:.4f}", delta="Degradation", delta_color="inverse")
+                else:
+                    st.metric("WER Change", "0.0000", delta="No change", delta_color="off")
     
     st.markdown("---")
     
@@ -522,19 +658,35 @@ def show_main_dashboard(df):
 def show_pipeline_comparison(df):
     st.header("🔍 Detailed Pipeline Comparison")
     
-    # Pipeline selection
-    pipelines = ['FixTranscriptByLLMPipeline', 'GenerateWhisperPromptPipeline', 
-                'GenerateNamesPipeline', 'GenerateTopicPipeline']
+    # Pipeline selection with friendly names
+    technical_pipelines = ['FixTranscriptByLLMPipeline', 'GenerateWhisperPromptPipeline', 
+                          'GenerateNamesPipeline', 'GenerateTopicPipeline']
     
-    selected_pipelines = st.multiselect(
+    # Create options with friendly names but keep technical names as values
+    pipeline_options = {get_friendly_pipeline_name(p): p for p in technical_pipelines}
+    
+    selected_friendly = st.multiselect(
         "Select Pipelines to Compare",
-        pipelines,
-        default=pipelines[:2]
+        list(pipeline_options.keys()),
+        default=list(pipeline_options.keys())[:2],
+        help="Choose which enhancement methods to compare"
     )
+    
+    # Convert back to technical names for processing
+    selected_pipelines = [pipeline_options[name] for name in selected_friendly]
     
     if len(selected_pipelines) < 2:
         st.warning("Please select at least 2 pipelines for comparison.")
         return
+    
+    # Show selected pipeline descriptions
+    st.subheader("Selected Pipeline Descriptions")
+    for friendly_name in selected_friendly:
+        technical_name = pipeline_options[friendly_name]
+        with st.expander(f"**{friendly_name}**", expanded=False):
+            st.write(get_pipeline_description(technical_name))
+    
+    st.markdown("---")
     
     # WER distribution comparison
     st.subheader("WER Distribution Comparison")
@@ -545,9 +697,10 @@ def show_pipeline_comparison(df):
         wer_col = f'{pipeline}_wer'
         if wer_col in df.columns:
             valid_data = df[df[wer_col].notna()][wer_col]
+            friendly_name = get_friendly_pipeline_name(pipeline)
             fig.add_trace(go.Histogram(
                 x=valid_data,
-                name=pipeline.replace('Pipeline', ''),
+                name=friendly_name,
                 opacity=0.7,
                 nbinsx=20
             ))
@@ -566,6 +719,9 @@ def show_pipeline_comparison(df):
         st.subheader("Head-to-Head Comparison")
         
         pipeline1, pipeline2 = selected_pipelines
+        friendly1 = get_friendly_pipeline_name(pipeline1)
+        friendly2 = get_friendly_pipeline_name(pipeline2)
+        
         wer1_col = f'{pipeline1}_wer'
         wer2_col = f'{pipeline2}_wer'
         
@@ -580,13 +736,13 @@ def show_pipeline_comparison(df):
         col1, col2, col3 = st.columns(3)
         
         with col1:
-            st.metric(f"{pipeline1} Wins", pipeline1_wins)
+            st.metric(f"{friendly1} Wins", pipeline1_wins)
         
         with col2:
             st.metric("Ties", ties)
         
         with col3:
-            st.metric(f"{pipeline2} Wins", pipeline2_wins)
+            st.metric(f"{friendly2} Wins", pipeline2_wins)
         
         # Scatter plot comparison
         fig = go.Figure()
@@ -601,7 +757,7 @@ def show_pipeline_comparison(df):
                 colorbar=dict(title="Baseline WER")
             ),
             text=comparison_df['video_id_extracted'],
-            hovertemplate=f"{pipeline1}: %{{x:.3f}}<br>{pipeline2}: %{{y:.3f}}<br>Video: %{{text}}<extra></extra>"
+            hovertemplate=f"{friendly1}: %{{x:.3f}}<br>{friendly2}: %{{y:.3f}}<br>Video: %{{text}}<extra></extra>"
         ))
         
         # Add diagonal line
@@ -616,9 +772,9 @@ def show_pipeline_comparison(df):
         ))
         
         fig.update_layout(
-            title=f"{pipeline1} vs {pipeline2} Performance",
-            xaxis_title=f"{pipeline1} WER",
-            yaxis_title=f"{pipeline2} WER"
+            title=f"{friendly1} vs {friendly2} Performance",
+            xaxis_title=f"{friendly1} WER",
+            yaxis_title=f"{friendly2} WER"
         )
         
         st.plotly_chart(fig, use_container_width=True)
@@ -665,18 +821,39 @@ def show_sample_analysis(df):
         
         # Ground truth
         st.subheader("🎯 Ground Truth")
-        st.markdown(f'<div class="transcript-box ground-truth-box">{sample["transcript"]}</div>', unsafe_allow_html=True)
+        
+        if 'transcript' in sample:
+            original_transcript = sample['transcript']
+            normalized_gt = normalize_text(original_transcript)
+            
+            col1, col2 = st.columns(2)
+            with col1:
+                st.markdown("**Original:**")
+                st.markdown(f'<div class="transcript-box ground-truth-box">{original_transcript}</div>', unsafe_allow_html=True)
+            with col2:
+                st.markdown("**Normalized (used for WER):**")
+                st.markdown(f'<div class="transcript-box ground-truth-box">{normalized_gt}</div>', unsafe_allow_html=True)
+        else:
+            st.markdown('<div class="transcript-box ground-truth-box"><em>No ground truth available</em></div>', unsafe_allow_html=True)
         
         # Baseline (raw STT)
         st.subheader("📄 Baseline (Raw Whisper)")
+        
+        # Show baseline WER
+        if 'stt_raw_wer' in sample and pd.notna(sample['stt_raw_wer']):
+            st.metric("Baseline WER", f"{sample['stt_raw_wer']:.4f}")
+        
         baseline_text = ""
         if 'stt_raw_norm' in sample and pd.notna(sample['stt_raw_norm']):
             baseline_text = sample['stt_raw_norm']
-            ground_truth = sample['transcript'].lower().strip()
-            
-            # Highlight differences from ground truth
-            gt_highlighted, baseline_highlighted = highlight_differences(ground_truth, baseline_text)
-            st.markdown(f'<div class="transcript-box baseline-box">{baseline_highlighted}</div>', unsafe_allow_html=True)
+            # Use normalized ground truth for comparison (same normalization as used for WER)
+            if 'transcript' in sample:
+                normalized_ground_truth = normalize_text(sample['transcript'])
+                # Highlight differences from normalized ground truth
+                gt_highlighted, baseline_highlighted = highlight_differences(normalized_ground_truth, baseline_text)
+                st.markdown(f'<div class="transcript-box baseline-box">{baseline_highlighted}</div>', unsafe_allow_html=True)
+            else:
+                st.markdown(f'<div class="transcript-box baseline-box">{baseline_text}</div>', unsafe_allow_html=True)
         else:
             st.markdown('<div class="transcript-box baseline-box"><em>Baseline transcription not available</em></div>', unsafe_allow_html=True)
         
@@ -689,9 +866,14 @@ def show_sample_analysis(df):
                     'GenerateNamesPipeline', 'GenerateTopicPipeline']
         
         for pipeline in pipelines:
-            pipeline_display_name = pipeline.replace('Pipeline', '').replace('Generate', '').replace('Whisper', 'Whisper ')
+            friendly_name = get_friendly_pipeline_name(pipeline)
+            description = get_pipeline_description(pipeline)
             
-            with st.expander(f"🔧 {pipeline_display_name}", expanded=True):
+            with st.expander(f"🔧 {friendly_name}", expanded=True):
+                # Show pipeline description
+                st.markdown(f"*{description}*")
+                st.markdown("---")
+                
                 col1, col2 = st.columns([2, 1])
                 
                 with col2:
@@ -713,12 +895,12 @@ def show_sample_analysis(df):
                         st.write("*No WER data available*")
                 
                 with col1:
-                    # Pipeline result text
+                    # Pipeline result text (already normalized in CSV)
                     pipeline_norm_col = f'{pipeline}_norm'
                     if pipeline_norm_col in sample and pd.notna(sample[pipeline_norm_col]):
                         pipeline_text = sample[pipeline_norm_col]
                         
-                        # Highlight differences from baseline
+                        # Highlight differences from baseline (both are already normalized)
                         if baseline_text:
                             baseline_highlighted2, pipeline_highlighted = highlight_differences(baseline_text, pipeline_text)
                             st.markdown(f'<div class="transcript-box pipeline-box">{pipeline_highlighted}</div>', unsafe_allow_html=True)
@@ -727,10 +909,10 @@ def show_sample_analysis(df):
                     else:
                         st.markdown('<div class="transcript-box pipeline-box"><em>No transcription available</em></div>', unsafe_allow_html=True)
                 
-                # Show initial prompt if available
+                # Show initial prompt if available (especially relevant for Smart Context Enhancement)
                 pipeline_prompt_col = f'{pipeline}_initial_prompt'
                 if pipeline_prompt_col in sample and pd.notna(sample[pipeline_prompt_col]):
-                    st.markdown("**🎯 Generated Prompt:**")
+                    st.markdown("**🎯 Generated Context/Prompt:**")
                     st.markdown(f'<div class="prompt-box">{sample[pipeline_prompt_col]}</div>', unsafe_allow_html=True)
 
 def show_video_performance(df):
@@ -757,9 +939,10 @@ def show_video_performance(df):
                 if len(valid_df) > 0:
                     improved = (valid_df[wer_col] < valid_df['stt_raw_wer']).sum()
                     total = len(valid_df)
-                    video_stat[f'{pipeline}_Improvement_%'] = (improved / total) * 100
-                    video_stat[f'{pipeline}_Baseline_WER'] = valid_df['stt_raw_wer'].mean()
-                    video_stat[f'{pipeline}_Pipeline_WER'] = valid_df[wer_col].mean()
+                    friendly_name = get_friendly_pipeline_name(pipeline)
+                    video_stat[f'{friendly_name}_Improvement_%'] = (improved / total) * 100
+                    video_stat[f'{friendly_name}_Baseline_WER'] = valid_df['stt_raw_wer'].mean()
+                    video_stat[f'{friendly_name}_Pipeline_WER'] = valid_df[wer_col].mean()
         
         video_stats.append(video_stat)
     
@@ -772,7 +955,7 @@ def show_video_performance(df):
     
     if improvement_cols:
         heatmap_data = video_stats_df.set_index('Video_ID')[improvement_cols]
-        heatmap_data.columns = [col.replace('_Improvement_%', '').replace('Pipeline', '') for col in heatmap_data.columns]
+        heatmap_data.columns = [col.replace('_Improvement_%', '') for col in heatmap_data.columns]
         
         fig = px.imshow(
             heatmap_data.T,
@@ -795,8 +978,9 @@ def show_video_performance(df):
     
     for pipeline in ['FixTranscriptByLLMPipeline', 'GenerateWhisperPromptPipeline', 
                     'GenerateNamesPipeline', 'GenerateTopicPipeline']:
-        improvement_col = f'{pipeline}_Improvement_%'
-        baseline_col = f'{pipeline}_Baseline_WER'
+        friendly_name = get_friendly_pipeline_name(pipeline)
+        improvement_col = f'{friendly_name}_Improvement_%'
+        baseline_col = f'{friendly_name}_Baseline_WER'
         
         if improvement_col in video_stats_df.columns and baseline_col in video_stats_df.columns:
             fig.add_trace(go.Scatter(
@@ -805,7 +989,7 @@ def show_video_performance(df):
                 mode='markers+text',
                 text=video_stats_df['Video_ID'],
                 textposition="top center",
-                name=pipeline.replace('Pipeline', ''),
+                name=friendly_name,
                 marker=dict(size=10)
             ))
     
@@ -821,11 +1005,240 @@ def show_video_performance(df):
     st.subheader("Detailed Video Statistics")
     st.dataframe(video_stats_df, use_container_width=True)
 
+
+
 def show_detailed_metrics(df):
     st.header("🎯 Detailed Performance Metrics")
     
     pipelines = ['FixTranscriptByLLMPipeline', 'GenerateWhisperPromptPipeline', 
                 'GenerateNamesPipeline', 'GenerateTopicPipeline']
+    
+    # Baseline WER Distribution Analysis
+    st.subheader("📊 Baseline WER Distribution Analysis")
+    
+    baseline_wer = df['stt_raw_wer'].dropna()
+    zero_wer_count = (baseline_wer == 0).sum()
+    perfect_segments_pct = (zero_wer_count / len(baseline_wer)) * 100
+    
+    col1, col2, col3 = st.columns(3)
+    with col1:
+        st.metric("Total Segments", len(baseline_wer))
+        st.metric("Mean WER", f"{baseline_wer.mean():.4f}")
+    with col2:
+        st.metric("Perfect Segments (WER=0)", zero_wer_count)
+        st.metric("Perfect %", f"{perfect_segments_pct:.1f}%")
+    with col3:
+        st.metric("Improvable Segments", len(baseline_wer) - zero_wer_count)
+        st.metric("Improvable %", f"{100-perfect_segments_pct:.1f}%")
+    
+    # Baseline distribution histogram
+    fig = px.histogram(
+        x=baseline_wer,
+        nbins=30,
+        title="Baseline WER Distribution - Shows Perfect vs Improvable Segments",
+        labels={'x': 'Word Error Rate', 'y': 'Count'},
+        marginal="box"
+    )
+    fig.add_vline(x=0, line_dash="dash", line_color="red", 
+                  annotation_text=f"Perfect (WER=0): {zero_wer_count} segments")
+    fig.add_vline(x=baseline_wer.mean(), line_dash="dash", line_color="green", 
+                  annotation_text=f"Mean: {baseline_wer.mean():.3f}")
+    
+    st.plotly_chart(fig, use_container_width=True)
+    
+    st.info(f"""
+    **Key Insight:** {perfect_segments_pct:.1f}% of segments have perfect baseline transcriptions (WER=0). 
+    These cannot be improved by any pipeline. The analysis below focuses on the {100-perfect_segments_pct:.1f}% 
+    of segments where improvement is actually possible.
+    """)
+    
+    st.markdown("---")
+    
+    # WER Distribution for All Approaches
+    st.subheader("📈 WER Distributions: All Approaches")
+    
+    # Create distribution plot for all pipelines
+    fig = go.Figure()
+    
+    # Add baseline
+    fig.add_trace(go.Histogram(
+        x=baseline_wer,
+        name="Baseline (Raw Whisper)",
+        opacity=0.7,
+        nbinsx=25,
+        marker_color='red'
+    ))
+    
+    # Add each pipeline
+    colors = ['blue', 'green', 'orange', 'purple']
+    for i, pipeline in enumerate(pipelines):
+        wer_col = f'{pipeline}_wer'
+        if wer_col in df.columns:
+            pipeline_wer = df[wer_col].dropna()
+            if len(pipeline_wer) > 0:
+                friendly_name = get_friendly_pipeline_name(pipeline)
+                fig.add_trace(go.Histogram(
+                    x=pipeline_wer,
+                    name=friendly_name,
+                    opacity=0.6,
+                    nbinsx=25,
+                    marker_color=colors[i % len(colors)]
+                ))
+    
+    fig.update_layout(
+        title="WER Distribution Comparison: All Approaches",
+        xaxis_title="Word Error Rate",
+        yaxis_title="Frequency",
+        barmode='overlay',
+        legend=dict(yanchor="top", y=0.99, xanchor="left", x=0.01)
+    )
+    
+    st.plotly_chart(fig, use_container_width=True)
+    
+    st.markdown("---")
+    
+    # Analysis excluding perfect transcriptions (WER = 0)
+    st.subheader("🎯 Analysis: Improvable Segments Only (Baseline WER > 0)")
+    
+    non_zero_mask = df['stt_raw_wer'] > 0
+    improvable_df = df[non_zero_mask]
+    
+    if len(improvable_df) > 0:
+        st.markdown(f"""
+        **Focus on Real Impact:** This analysis excludes {zero_wer_count} perfect segments and focuses on 
+        the {len(improvable_df)} segments where Whisper baseline had errors and improvement is possible.
+        """)
+        
+        # Recalculate statistics for improvable segments only
+        improvable_stats = []
+        
+        for pipeline in pipelines:
+            wer_col = f'{pipeline}_wer'
+            if wer_col in improvable_df.columns:
+                valid_mask = (~improvable_df['stt_raw_wer'].isna()) & (~improvable_df[wer_col].isna())
+                valid_df = improvable_df[valid_mask]
+                
+                if len(valid_df) > 0:
+                    improved = (valid_df[wer_col] < valid_df['stt_raw_wer']).sum()
+                    same = (np.abs(valid_df[wer_col] - valid_df['stt_raw_wer']) < 1e-6).sum()
+                    degraded = (valid_df[wer_col] > valid_df['stt_raw_wer']).sum()
+                    total = len(valid_df)
+                    
+                    baseline_wer_mean = valid_df['stt_raw_wer'].mean()
+                    pipeline_wer_mean = valid_df[wer_col].mean()
+                    wer_reduction = baseline_wer_mean - pipeline_wer_mean
+                    relative_reduction = (wer_reduction / baseline_wer_mean) * 100 if baseline_wer_mean > 0 else 0
+                    
+                    improvable_stats.append({
+                        'Pipeline': get_friendly_pipeline_name(pipeline),
+                        'Total_Segments': total,
+                        'Improved': improved,
+                        'Improved_%': (improved / total) * 100,
+                        'Same': same,
+                        'Same_%': (same / total) * 100,
+                        'Degraded': degraded,
+                        'Degraded_%': (degraded / total) * 100,
+                        'Baseline_WER': baseline_wer_mean,
+                        'Pipeline_WER': pipeline_wer_mean,
+                        'WER_Reduction': wer_reduction,
+                        'Relative_Reduction_%': relative_reduction
+                    })
+        
+        if improvable_stats:
+            improvable_stats_df = pd.DataFrame(improvable_stats)
+            
+            # Comparison: All segments vs Improvable segments
+            st.subheader("📊 Impact Comparison: All vs Improvable Segments")
+            
+            all_stats_df = calculate_pipeline_stats(df)
+            comparison_data = []
+            
+            for _, row in improvable_stats_df.iterrows():
+                pipeline_name = row['Pipeline']
+                all_row = all_stats_df[all_stats_df['Pipeline'] == pipeline_name].iloc[0]
+                
+                comparison_data.extend([
+                    {'Pipeline': pipeline_name, 'Dataset': 'All Segments (WER=0 && WER>0)', 'Improvement_%': all_row['Improved_%']},
+                    {'Pipeline': pipeline_name, 'Dataset': 'Improvable Only (WER>0)', 'Improvement_%': row['Improved_%']}
+                ])
+            
+            comparison_df = pd.DataFrame(comparison_data)
+            
+            fig = px.bar(
+                comparison_df,
+                x='Pipeline',
+                y='Improvement_%',
+                color='Dataset',
+                barmode='group',
+                title="Improvement Rate: Including vs Excluding Perfect Segments",
+                labels={'Improvement_%': 'Improvement Rate (%)'},
+                color_discrete_map={'All Segments': '#ff7f0e', 'Improvable Only': '#2ca02c'}
+            )
+            
+            st.plotly_chart(fig, use_container_width=True)
+            
+            # WER distributions for improvable segments only
+            st.subheader("📈 WER Distributions: Improvable Segments Only")
+            
+            fig = go.Figure()
+            
+            # Baseline for improvable segments
+            improvable_baseline = improvable_df['stt_raw_wer'].dropna()
+            fig.add_trace(go.Histogram(
+                x=improvable_baseline,
+                name="Baseline (Improvable)",
+                opacity=0.7,
+                nbinsx=20,
+                marker_color='red'
+            ))
+            
+            # Pipeline distributions for improvable segments
+            for i, pipeline in enumerate(pipelines):
+                wer_col = f'{pipeline}_wer'
+                if wer_col in improvable_df.columns:
+                    pipeline_wer = improvable_df[wer_col].dropna()
+                    if len(pipeline_wer) > 0:
+                        friendly_name = get_friendly_pipeline_name(pipeline)
+                        fig.add_trace(go.Histogram(
+                            x=pipeline_wer,
+                            name=friendly_name,
+                            opacity=0.6,
+                            nbinsx=20,
+                            marker_color=colors[i % len(colors)]
+                        ))
+            
+            fig.update_layout(
+                title="WER Distribution: Improvable Segments Only (Baseline WER > 0)",
+                xaxis_title="Word Error Rate",
+                yaxis_title="Frequency",
+                barmode='overlay'
+            )
+            
+            st.plotly_chart(fig, use_container_width=True)
+            
+            # Detailed statistics table
+            st.subheader("📋 Performance Statistics: Improvable Segments Only")
+            
+            display_df = improvable_stats_df.copy()
+            for col in ['Improved_%', 'Same_%', 'Degraded_%', 'Relative_Reduction_%']:
+                display_df[col] = display_df[col].round(1)
+            for col in ['Baseline_WER', 'Pipeline_WER', 'WER_Reduction']:
+                display_df[col] = display_df[col].round(4)
+            
+            st.dataframe(
+                display_df[['Pipeline', 'Total_Segments', 'Improved_%', 'Same_%', 'Degraded_%', 
+                           'Baseline_WER', 'Pipeline_WER', 'WER_Reduction', 'Relative_Reduction_%']],
+                use_container_width=True
+            )
+            
+            st.success(f"""
+            **Real Impact Summary:** When focusing on the {len(improvable_df)} segments where improvement 
+            is actually possible (excluding perfect transcriptions), the pipelines show their true effectiveness.
+            """)
+    else:
+        st.warning("No improvable segments found (all baseline WER = 0).")
+    
+    st.markdown("---")
     
     # WER improvement distribution
     st.subheader("📊 WER Improvement Distribution")
@@ -840,8 +1253,9 @@ def show_detailed_metrics(df):
             
             if len(valid_df) > 0:
                 improvements = valid_df['stt_raw_wer'] - valid_df[wer_col]
+                friendly_name = get_friendly_pipeline_name(pipeline)
                 improvement_data.extend([{
-                    'Pipeline': pipeline.replace('Pipeline', '').replace('Generate', '').replace('Whisper', 'Whisper '),
+                    'Pipeline': friendly_name,
                     'WER_Improvement': imp,
                     'Absolute_Improvement': abs(imp),
                     'Improvement_Category': 'Improved' if imp > 1e-6 else ('Degraded' if imp < -1e-6 else 'Same')
