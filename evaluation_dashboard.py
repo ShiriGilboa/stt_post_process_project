@@ -38,7 +38,6 @@ except ImportError as e:
         text = re.sub(r'\s+', ' ', text)
         return text.strip()
 
-
 # Authentication configuration
 # Priority: 1) Streamlit secrets, 2) Environment variable, 3) Fallback
 try:
@@ -1067,48 +1066,6 @@ def show_detailed_metrics(df):
     
     st.markdown("---")
     
-    # WER Distribution for All Approaches
-    st.subheader("📈 WER Distributions: All Approaches")
-    
-    # Create distribution plot for all pipelines
-    fig = go.Figure()
-    
-    # Add baseline
-    fig.add_trace(go.Histogram(
-        x=baseline_wer,
-        name="Baseline (Raw Whisper)",
-        opacity=0.7,
-        nbinsx=25,
-        marker_color='red'
-    ))
-    
-    # Add each pipeline
-    colors = ['blue', 'green', 'orange', 'purple']
-    for i, pipeline in enumerate(pipelines):
-        wer_col = f'{pipeline}_wer'
-        if wer_col in df.columns:
-            pipeline_wer = df[wer_col].dropna()
-            if len(pipeline_wer) > 0:
-                friendly_name = get_friendly_pipeline_name(pipeline)
-                fig.add_trace(go.Histogram(
-                    x=pipeline_wer,
-                    name=friendly_name,
-                    opacity=0.6,
-                    nbinsx=25,
-                    marker_color=colors[i % len(colors)]
-                ))
-    
-    fig.update_layout(
-        title="WER Distribution Comparison: All Approaches",
-        xaxis_title="Word Error Rate",
-        yaxis_title="Frequency",
-        barmode='overlay',
-        legend=dict(yanchor="top", y=0.99, xanchor="left", x=0.01)
-    )
-    
-    st.plotly_chart(fig, use_container_width=True)
-    
-    st.markdown("---")
     
     # Analysis excluding perfect transcriptions (WER = 0)
     st.subheader("🎯 Analysis: Improvable Segments Only (Baseline WER > 0)")
