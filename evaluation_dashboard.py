@@ -21,10 +21,23 @@ except ImportError as e:
     st.warning(f"Could not import normalization functions: {e}. Text will be displayed as-is.")
     NORMALIZATION_AVAILABLE = False
     # Fallback normalize function
-    def normalize_text(text):
+    def normalize_text(text: str) -> str:
         if not isinstance(text, str):
             return ""
-        return text.lower().strip()
+        text = text.lower()
+
+        def replace_number(match):
+            try:
+                return num2words.num2words(int(match.group()))
+            except Exception:
+                return match.group()
+
+        # Replace numbers with words **before** removing special characters
+        text = re.sub(r'\d+', replace_number, text)
+        text = re.sub(r'[^a-z\s]', ' ', text)
+        text = re.sub(r'\s+', ' ', text)
+        return text.strip()
+
 
 # Authentication configuration
 # Priority: 1) Streamlit secrets, 2) Environment variable, 3) Fallback
